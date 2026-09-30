@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>NDRF Inundation Telemetry | Command Center</title>
+    <!-- MapLibre & Deck.gl -->
+    <script src="https://unpkg.com/maplibre-gl@3.3.0/dist/maplibre-gl.js"></script>
+    <link href="https://unpkg.com/maplibre-gl@3.3.0/dist/maplibre-gl.css" rel="stylesheet" />
+    <script src="https://unpkg.com/deck.gl@8.9.0/dist.min.js"></script>
+    <!-- Tech Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;700&family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;600&display=swap" rel="stylesheet">
+    
+    <style>
+        :root {
+            --cyan: #00f0ff;
+            --cyan-dim: rgba(0, 240, 255, 0.2);
+            --red: #ff003c;
+            --amber: #ffb000;
+            --bg-hud: rgba(6, 11, 25, 0.85);
+            --border-hud: rgba(0, 240, 255, 0.3);
+            --text-main: #e2e8f0;
+            --text-muted: #64748b;
+        }
+
+        body { margin: 0; padding: 0; font-family: 'Inter', sans-serif; background-color: #020617; overflow: hidden; color: var(--text-main); }
+        #map { width: 100vw; height: 100vh; position: absolute; top: 0; left: 0; }
+        
+        #hud-panel {
+            position: absolute; top: 20px; left: 20px; width: 380px;
+            background: var(--bg-hud); border: 1px solid var(--border-hud);
+            padding: 24px; z-index: 10; backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+            box-shadow: 0 0 20px rgba(0, 240, 255, 0.05), inset 0 0 20px rgba(0, 240, 255, 0.05);
+            border-radius: 4px;
+            clip-path: polygon(0 0, 100% 0, 100% calc(100% - 15px), calc(100% - 15px) 100%, 0 100%);
+        }
+
+        .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; border-bottom: 1px solid var(--cyan-dim); padding-bottom: 15px; }
+        .header-title { font-family: 'Rajdhani', sans-serif; font-size: 1.4rem; color: var(--cyan); font-weight: 700; text-transform: uppercase; letter-spacing: 1px; margin: 0; line-height: 1.2; }
+        .header-sub { font-family: 'JetBrains Mono', monospace; font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 2px; }
+        
+        .live-badge { display: flex; align-items: center; gap: 6px; font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; font-weight: 700; color: var(--red); background: rgba(255, 0, 60, 0.1); padding: 4px 8px; border: 1px solid var(--red); border-radius: 2px; }
+        .pulse-dot { width: 6px; height: 6px; background-color: var(--red); border-radius: 50%; animation: pulse 1.5s infinite; }
+        @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(255, 0, 60, 0.7); } 70% { box-shadow: 0 0 0 6px rgba(255, 0, 60, 0); } 100% { box-shadow: 0 0 0 0 rgba(255, 0, 60, 0); } }
+
+        .input-group { margin-bottom: 15px; }
+        .input-label { font-family: 'Rajdhani', sans-serif; font-size: 0.9rem; color: var(--cyan); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; display: block; }
+        
+        .target-select {
+            width: 100%; padding: 10px 12px; background: rgba(0,0,0,0.5); color: #fff;
+            border: 1px solid var(--border-hud); font-family: 'JetBrains Mono', monospace; font-size: 0.85rem;
+            cursor: pointer; outline: none; appearance: none;
+            background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2300f0ff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
+            background-repeat: no-repeat; background-position: right 10px center; background-size: 14px;
+            transition: all 0.3s;
+        }
+        .target-select:hover { border-color: var(--cyan); box-shadow: 0 0 10px var(--cyan-dim); }
+        .target-select option { background: #020617; }
+
+        .toggle-box { display: flex; background: rgba(0,0,0,0.5); border: 1px solid var(--border-hud); padding: 2px; }
+        .toggle-btn { flex: 1; padding: 6px; text-align: center; cursor: pointer; font-family: 'Rajdhani', sans-serif; font-size: 0.9rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; transition: 0.3s; }
+        .toggle-btn.active { background: var(--cyan-dim); color: var(--cyan); text-shadow: 0 0 8px var(--cyan); }
+
+        .slider-wrapper { background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); padding: 12px; margin-bottom: 15px; border-left: 3px solid var(--cyan); margin-top: 15px; }
+        .slider-header { display: flex; justify-content: space-between; font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; margin-bottom: 12px; color: var(--text-muted); }
+        .slider-header b { color: var(--cyan); font-size: 0.85rem; }
+        input[type=range] { width: 100%; appearance: none; background: transparent; cursor: pointer; }
+        input[type=range]::-webkit-slider-runnable-track { background: rgba(255,255,255,0.2); height: 2px; }
+        input[type=range]::-webkit-slider-thumb { appearance: none; margin-top: -6px; width: 14px; height: 14px; background: #020617; border: 2px solid var(--cyan); box-shadow: 0 0 8px var(--cyan); transform: rotate(45deg); }
+
+        .telemetry-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 15px; }
+        .data-box { background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.05); padding: 10px; border-top: 2px solid var(--text-muted); transition: 0.3s; }
+        .data-box small { display: block; font-family: 'Rajdhani', sans-serif; font-size: 0.75rem; text-transform: uppercase; color: var(--text-muted); letter-spacing: 1px; margin-bottom: 4px; }
+        .data-box span { font-family: 'JetBrains Mono', monospace; font-size: 1.2rem; font-weight: 700; color: #fff; }
+        .data-box.critical { border-top-color: var(--red); background: rgba(255,0,60,0.05); animation: flash-bg 2s infinite; }
+        .data-box.critical span { color: var(--red); text-shadow: 0 0 10px rgba(255,0,60,0.5); }
+        
+        @keyframes flash-bg { 0%, 100% { background: rgba(255,0,60,0.02); } 50% { background: rgba(255,0,60,0.1); } }
+
+        .zone-banner { grid-column: span 2; background: var(--cyan-dim); border: 1px solid var(--cyan); padding: 8px; text-align: center; font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; color: var(--cyan); text-transform: uppercase; letter-spacing: 2px; }
+
+        .action-btn { display: block; width: 100%; padding: 10px; background: transparent; color: var(--cyan); text-align: center; text-decoration: none; font-family: 'Rajdhani', sans-serif; font-size: 1rem; font-weight: 700; text-transform: uppercase; letter-spacing: 2px; border: 1px solid var(--cyan); cursor: pointer; transition: 0.3s; position: relative; overflow: hidden; box-sizing: border-box; }
+        .action-btn:hover { background: var(--cyan); color: #020617; box-shadow: 0 0 15px var(--cyan); }
+        .action-btn::before { content: ''; position: absolute; top: 0; left: -100%; width: 50%; height: 100%; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent); transform: skewX(-20deg); transition: 0.5s; }
+        .action-btn:hover::before { left: 150%; }
+
+        .sys-footer { margin-top: 15px; display: flex; justify-content: space-between; font-family: 'JetBrains Mono', monospace; font-size: 0.6rem; color: rgba(255,255,255,0.3); border-top: 1px solid rgba(255,255,255,0.1); padding-top: 10px; }
+
+        .deck-tooltip { background: rgba(6, 11, 25, 0.95) !important; color: var(--cyan) !important; border: 1px solid var(--cyan) !important; padding: 12px !important; font-family: 'JetBrains Mono', monospace !important; font-size: 11px !important; box-shadow: 0 0 15px rgba(0, 240, 255, 0.2) !important; text-transform: uppercase; border-radius: 0 !important; clip-path: polygon(0 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%); line-height: 1.6 !important; }
+        .deck-tooltip strong { color: #fff; font-size: 13px; border-bottom: 1px solid var(--cyan-dim); padding-bottom: 4px; display: block; margin-bottom: 6px; }
+        .tooltip-alert { color: var(--red); font-weight: bold; animation: text-flash 1s infinite; margin-top: 6px; display: block; }
+        @keyframes text-flash { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    
+    <div id="hud-panel">
+        <div class="header">
+            <div>
+                <h1 class="header-title">NDRF Inundation</h1>
+                <div class="header-sub">Tactical Telemetry System</div>
+            </div>
+            <div class="live-badge">
+                <div class="pulse-dot"></div> LIVE
+            </div>
+        </div>
+        
+        <div class="input-group">
+            <span class="input-label">Target Infrastructure</span>
+            <select id="damSelect" class="target-select" onchange="onDamChange()">
+                <option value="nagarjuna">Nagarjuna Sagar (TS/AP)</option>
+                <option value="bhakra">Bhakra Nangal (HP)</option>
+                <option value="hirakud">Hirakud Dam (OR)</option>
+                <option value="mullaperiyar">Mullaperiyar (KL)</option>
+                <option value="sardar">Sardar Sarovar (GJ)</option>
+            </select>
+        </div>
+
+        <!-- NEW: Basemap Terrain Toggle -->
+        <div class="input-group">
+            <span class="input-label">Basemap Terrain</span>
+            <div class="toggle-box">
+                <div id="map-dark" class="toggle-btn active" onclick="setMapStyle('dark')">DARK MATTER</div>
+                <div id="map-sat" class="toggle-btn" onclick="setMapStyle('satellite')">SATELLITE</div>
+            </div>
+        </div>
+
+        <div class="input-group">
+            <span class="input-label">Simulation Engine</span>
+            <div class="toggle-box">
+                <div id="btn-sph" class="toggle-btn" onclick="switchModel('sph')">SPH Breach</div>
+                <div id="btn-delft" class="toggle-btn active" onclick="switchModel('delft3d')">Delft3D Wave</div>
+            </div>
+        </div>
+
+        <div id="sliderWrapper" class="slider-wrapper">
+            <div class="slider-header">
+                <span>PREDICTIVE HORIZON</span>
+                <span>T+<b id="hourLabel">3.0</b> HRS</span>
+            </div>
+            <input type="range" id="hourSlider" min="1" max="3" value="3" step="1">
+        </div>
+
+        <span class="input-label">Live Sensor Data</span>
+        <div class="telemetry-grid">
+            <div class="data-box" id="depthBox">
+                <small>Peak Depth</small>
+                <span id="depthTxt">-- m</span>
+            </div>
+            <div class="data-box">
+                <small>Flow Velocity</small>
+                <span id="velTxt">-- m/s</span>
+            </div>
+            <div class="zone-banner" id="zoneTxt">
+                AWAITING TELEMETRY...
+            </div>
+        </div>
+
+        <a id="exportBtn" class="action-btn" href="/api/download/nagarjuna?model=delft3d&hour=3">
+            [ EXTRACT GEOJSON ]
+        </a>
+
+        <div class="sys-footer">
+            <span>SYS.OP: VGNT_ZERO2ONE</span>
+            <span>SIH_2026 // SECURE</span>
+        </div>
+    </div>
+
+    <script>
+        let currentDam = "nagarjuna";
+        let currentModel = "delft3d";
+        let currentHour = 3;
+        let damPayload = null;
+
+        // Custom Satellite JSON styling relying on Esri's free global raster tiles
+        const MAP_STYLES = {
+            dark: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+            satellite: {
+                version: 8,
+                sources: {
+                    'esri-satellite': {
+                        type: 'raster',
+                        tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
+                        tileSize: 256
+                    }
+                },
+                layers: [{
+                    id: 'satellite',
+                    type: 'raster',
+                    source: 'esri-satellite',
+                    minzoom: 0,
+                    maxzoom: 22
+                }]
+            }
+        };
+
+        const deckgl = new deck.DeckGL({
+            container: 'map',
+            initialViewState: { longitude: 79.3134, latitude: 16.5796, zoom: 10.5, pitch: 55, bearing: -15 },
+            controller: true,
+            mapStyle: MAP_STYLES.dark,
+            getTooltip: ({object}) => {
+                if (!object) return null;
+                const p = object.properties;
+                if (p.name) {
+                    const impactH = p.impact_hour ?? p.impact_hou ?? 1;
+                    const flooded = currentModel === 'delft3d' && impactH <= currentHour;
+                    const statusHtml = flooded 
+                        ? `<span class="tooltip-alert">⚠️ EVACUATION MANDATORY</span>` 
+                        : `<span style="color: #00f0ff;">STATUS: SECURE</span>`;
+                    return { html: `<strong>TGT: ${p.name}</strong>EST. POPULATION: ${p.population}<br/>IMPACT HORIZON: T+${impactH} HRS<br/>${statusHtml}` };
+                }
+                if (p.depth_m || p.depth) {
+                    return { html: `<strong>SECTOR: ${p.zone || 'ACTIVE'}</strong>WATER DEPTH: ${(p.depth_m ?? p.depth).toFixed(1)} M<br/>FLOW VELOCITY: ${(p.velocity ?? 0).toFixed(1)} M/S` };
+                }
+                return null;
+            }
+        });
+
+        function setMapStyle(styleKey) {
+            document.getElementById('map-dark').classList.toggle('active', styleKey === 'dark');
+            document.getElementById('map-sat').classList.toggle('active', styleKey === 'satellite');
+            deckgl.setProps({ mapStyle: MAP_STYLES[styleKey] });
+        }
+
+        function fetchDamData() {
+            fetch(`/api/flood-data/${currentDam}`)
+                .then(r => r.json())
+                .then(data => {
+                    damPayload = data;
+                    render();
+                })
+                .catch(err => console.error("Telemetry link severed:", err));
+        }
+
+        function onDamChange() {
+            currentDam = document.getElementById("damSelect").value;
+            fetchDamData();
+            updateExportUrl();
+
+            fetch(`/api/flood-data/${currentDam}`)
+                .then(r => r.json())
+                .then(d => {
+                    deckgl.setProps({
+                        initialViewState: {
+                            longitude: d.coords[0],
+                            latitude: d.coords[1],
+                            zoom: 10.5,
+                            pitch: 55,
+                            bearing: -15,
+                            transitionDuration: 2500,
+                            transitionInterpolator: new deck.FlyToInterpolator()
+                        }
+                    });
+                });
+        }
+
+        function switchModel(model) {
+            currentModel = model;
+            document.getElementById("btn-sph").classList.toggle("active", model === 'sph');
+            document.getElementById("btn-delft").classList.toggle("active", model === 'delft3d');
+            document.getElementById("sliderWrapper").style.display = model === 'sph' ? 'none' : 'block';
+            updateExportUrl();
+            render();
+        }
+
+        document.getElementById("hourSlider").addEventListener("input", (e) => {
+            currentHour = parseInt(e.target.value);
+            document.getElementById("hourLabel").innerText = currentHour + ".0";
+            updateExportUrl();
+            render();
+        });
+
+        function updateExportUrl() {
+            document.getElementById("exportBtn").href = `/api/download/${currentDam}?model=${currentModel}&hour=${currentHour}`;
+        }
+
+        function render() {
+            if (!damPayload) return;
+
+            let features = [];
+            if (currentModel === 'delft3d') {
+                features = (damPayload.delft3d.features || []).filter(f => {
+                    const h = f.properties.arrival_hour ?? f.properties.arrival_ho ?? 0;
+                    return h <= currentHour;
+                });
+            } else {
+                features = damPayload.sph.features || [];
+            }
+
+            const depthBox = document.getElementById("depthBox");
+
+            if (features.length > 0) {
+                const lead = features[features.length - 1].properties;
+                const depthVal = lead.depth_m ?? lead.depth ?? 0;
+                
+                document.getElementById("depthTxt").innerText = `${depthVal.toFixed(1)} m`;
+                document.getElementById("velTxt").innerText = `${(lead.velocity ?? 0).toFixed(1)} m/s`;
+                document.getElementById("zoneTxt").innerText = `SECTOR: ${lead.zone || 'ACTIVE'}`;
+
+                if (depthVal > 30) {
+                    depthBox.classList.add("critical");
+                } else {
+                    depthBox.classList.remove("critical");
+                }
+            } else {
+                document.getElementById("depthTxt").innerText = '-- m';
+                document.getElementById("velTxt").innerText = '-- m/s';
+                document.getElementById("zoneTxt").innerText = 'AWAITING TELEMETRY...';
+                depthBox.classList.remove("critical");
+            }
+
+            const polygonLayer = new deck.GeoJsonLayer({
+                id: 'flood-polygons',
+                data: { type: 'FeatureCollection', features },
+                extruded: true,
+                wireframe: true,
+                getElevation: d => (d.properties.depth_m ?? d.properties.depth ?? 10) * 45,
+                getFillColor: d => currentModel === 'sph' ? [0, 240, 255, 200] :
+                                   (d.properties.depth_m ?? 0) > 30 ? [255, 0, 60, 200] :
+                                   (d.properties.depth_m ?? 0) > 20 ? [255, 176, 0, 200] : [0, 160, 255, 200],
+                getLineColor: [255, 255, 255, 100],
+                pickable: true,
+                transitions: { getElevation: 600, getFillColor: 600 }
+            });
+
+            const pointsLayer = new deck.ScatterplotLayer({
+                id: 'settlements',
+                data: damPayload.settlements.features || [],
+                getPosition: d => d.geometry.coordinates,
+                radiusScale: 120,
+                radiusMinPixels: 6,
+                radiusMaxPixels: 18,
+                stroked: true,
+                lineWidthMinPixels: 2,
+                getLineColor: [0, 0, 0],
+                getFillColor: d => {
+                    const h = d.properties.impact_hour ?? d.properties.impact_hou ?? 1;
+                    return (currentModel === 'delft3d' && h <= currentHour) ? [255, 0, 60, 255] : [0, 240, 255, 255];
+                },
+                pickable: true,
+                transitions: { getFillColor: 300 }
+            });
+
+            deckgl.setProps({ layers: [polygonLayer, pointsLayer] });
+        }
+
+        fetchDamData();
+    </script>
+</body>
+</html>
